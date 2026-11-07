@@ -1,0 +1,337 @@
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام الصيدلية - نقطة البيع (POS)</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+   
+        @media print {
+            body * { visibility: hidden; }
+            #receiptPrintArea, #receiptPrintArea * { visibility: visible; }
+            #receiptPrintArea {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 80mm; 
+                font-family: monospace;
+                font-size: 12px;
+                padding: 5px;
+            }
+            .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body class="bg-light">
+
+   
+    <div id="loginSection" class="container py-5" style="max-width: 400px;">
+        <div class="card shadow">
+            <div class="card-header bg-primary text-white text-center">
+                <h4 class="mb-0">تسجيل الدخول للنظام</h4>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">البريد الإلكتروني</label>
+                    <input type="email" id="loginEmail" class="form-control" placeholder="admin@pharmacy.com">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">كلمة المرور</label>
+                    <input type="password" id="loginPassword" class="form-control" placeholder="******">
+                </div>
+                <button onclick="login()" class="btn btn-primary w-100 fw-bold">دخول</button>
+            </div>
+        </div>
+    </div>
+
+   
+    <div id="posSection" class="container-fluid py-3 d-none">
+        <header class="d-flex justify-content-between align-items-center pb-3 mb-3 border-bottom no-print">
+            <h3 class="fw-bold text-primary m-0">صيدليتي - شاشة الكاشير</h3>
+            <div>
+                <span id="userInfo" class="fw-bold me-3 text-secondary"></span>
+                <button onclick="logout()" class="btn btn-outline-danger btn-sm">تسجيل الخروج</button>
+            </div>
+        </header>
+
+        <div class="row no-print">
+           
+            <div class="col-md-7">
+                <div class="card shadow-sm mb-3">
+                    <div class="card-body">
+                        <div class="input-group mb-3">
+                            <span class="input-group-text bg-primary text-white">🔍 قارئ الباركود / البحث</span>
+                            <input type="text" id="barcodeInput" class="form-control form-control-lg" placeholder="امسح الباركود هنا أو اكتب اسم الدواء..." autofocus>
+                        </div>
+                        <div id="medicinesList" class="list-group" style="max-height: 450px; overflow-y: auto;"></div>
+                    </div>
+                </div>
+            </div>
+
+           
+            <div class="col-md-5">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-success text-white fw-bold">الفاتورة الحالية</div>
+                    <div class="card-body">
+                        <ul id="cartList" class="list-group mb-3" style="max-height: 300px; overflow-y: auto;">
+                            <li class="list-group-item text-muted text-center">الفاتورة فارغة</li>
+                        </ul>
+                        
+                        <div class="d-flex justify-content-between fw-bold fs-4 mb-3 text-dark">
+                            <span>الإجمالي:</span>
+                            <span id="grandTotal">0.00 ج.م</span>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label font-weight-bold">طريقة الدفع</label>
+                            <select id="paymentMethod" class="form-select">
+                                <option value="cash">نقدي (Cash)</option>
+                                <option value="visa">بطاقة ائتمان (Visa)</option>
+                            </select>
+                        </div>
+
+                        <button onclick="checkoutAndPrint()" class="btn btn-success w-100 py-3 fw-bold fs-5">إتمام البيع وطباعة الفاتورة 🖨️</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+   
+    <div id="receiptPrintArea"></div>
+
+    <script>
+        const API_URL = "http://127.0.0.1:8000/api";
+        let token = localStorage.getItem("pharmacy_token");
+        let cart = [];
+
+       
+        if (token) {
+            showPOS();
+        }
+
+      
+        async function login() {
+            let email = document.getElementById("loginEmail").value;
+            let password = document.getElementById("loginPassword").value;
+
+            try {
+                let res = await fetch(`${API_URL}/login`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+                    body: JSON.stringify({ email, password })
+                });
+
+                let data = await res.json();
+                if (res.ok) {
+                    token = data.access_token;
+                    localStorage.setItem("pharmacy_token", token);
+                    localStorage.setItem("user_name", data.user.name);
+                    showPOS();
+                } else {
+                    alert(data.message || "بيانات الدخول غير صحيحة");
+                }
+            } catch (err) {
+                alert("تعذر الاتصال بالسيرفر");
+            }
+        }
+
+        
+        function showPOS() {
+            document.getElementById("loginSection").classList.add("d-none");
+            document.getElementById("posSection").classList.remove("d-none");
+            document.getElementById("userInfo").innerText = "المستخدم: " + (localStorage.getItem("user_name") || "كاشير");
+            fetchMedicines();
+        }
+
+       
+        function logout() {
+            localStorage.clear();
+            location.reload();
+        }
+
+        
+        async function fetchMedicines(query = "") {
+            try {
+                let res = await fetch(`${API_URL}/medicines?search=${query}`, {
+                    headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json" }
+                });
+                let data = await res.json();
+                let list = document.getElementById("medicinesList");
+                list.innerHTML = "";
+
+               
+                if (data.data.length === 1 && (data.data[0].barcode === query)) {
+                    addToCart(data.data[0]);
+                    document.getElementById("barcodeInput").value = "";
+                    return;
+                }
+
+                data.data.forEach(med => {
+                    list.innerHTML += `
+                        <button onclick='addToCart(${JSON.stringify(med)})' class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1 fw-bold">${med.name}</h6>
+                                <small class="text-muted">الباركود: ${med.barcode} | المتاح: ${med.quantity}</small>
+                            </div>
+                            <span class="badge bg-primary fs-6">${med.selling_price} ج.م</span>
+                        </button>
+                    `;
+                });
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        
+        function addToCart(medicine) {
+            let item = cart.find(i => i.medicine_id === medicine.id);
+            if (item) {
+                if (item.quantity < medicine.quantity) {
+                    item.quantity++;
+                } else {
+                    alert("الكمية بالمخزن لا تكفي!");
+                }
+            } else {
+                cart.push({
+                    medicine_id: medicine.id,
+                    name: medicine.name,
+                    price: parseFloat(medicine.selling_price),
+                    quantity: 1,
+                    max_stock: medicine.quantity
+                });
+            }
+            updateCart();
+        }
+
+        
+        function updateCart() {
+            let cartList = document.getElementById("cartList");
+            let totalEl = document.getElementById("grandTotal");
+            cartList.innerHTML = "";
+            let total = 0;
+
+            if (cart.length === 0) {
+                cartList.innerHTML = `<li class="list-group-item text-muted text-center">الفاتورة فارغة</li>`;
+                totalEl.innerText = "0.00 ج.م";
+                return;
+            }
+
+            cart.forEach((item, index) => {
+                let subtotal = item.price * item.quantity;
+                total += subtotal;
+                cartList.innerHTML += `
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="fw-bold">${item.name}</div>
+                            <small>${item.price} × ${item.quantity} = ${subtotal.toFixed(2)} ج.م</small>
+                        </div>
+                        <div>
+                            <button onclick="changeQty(${index}, -1)" class="btn btn-sm btn-outline-secondary">-</button>
+                            <button onclick="changeQty(${index}, 1)" class="btn btn-sm btn-outline-secondary">+</button>
+                            <button onclick="removeItem(${index})" class="btn btn-sm btn-danger ms-2">&times;</button>
+                        </div>
+                    </li>
+                `;
+            });
+
+            totalEl.innerText = total.toFixed(2) + " ج.م";
+        }
+
+        function changeQty(index, delta) {
+            if (cart[index].quantity + delta > cart[index].max_stock) {
+                alert("عفواً، الكمية المتاحة بالمخزن لا تكفي!");
+                return;
+            }
+            cart[index].quantity += delta;
+            if (cart[index].quantity <= 0) cart.splice(index, 1);
+            updateCart();
+        }
+
+        function removeItem(index) {
+            cart.splice(index, 1);
+            updateCart();
+        }
+
+       
+        document.getElementById("barcodeInput").addEventListener("input", function(e) {
+            fetchMedicines(e.target.value);
+        });
+
+       
+        async function checkoutAndPrint() {
+            if (cart.length === 0) return alert("سلة الفاتورة فارغة!");
+
+            let paymentMethod = document.getElementById("paymentMethod").value;
+            let itemsPayload = cart.map(i => ({ medicine_id: i.medicine_id, quantity: i.quantity }));
+
+            try {
+                let res = await fetch(`${API_URL}/sales`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${token}`,
+                        "Accept": "application/json"
+                    },
+                    body: JSON.stringify({ payment_method: paymentMethod, items: itemsPayload })
+                });
+
+                let data = await res.json();
+                if (res.ok) {
+                    
+                    buildReceiptHTML(data.invoice);
+                    window.print();
+
+                   
+                    cart = [];
+                    updateCart();
+                    fetchMedicines();
+                    document.getElementById("barcodeInput").focus();
+                } else {
+                    alert("خطأ: " + (data.message || "فشلت عملية البيع"));
+                }
+            } catch (err) {
+                alert("حدث خطأ في الاتصال بالخادم");
+            }
+        }
+
+        function buildReceiptHTML(invoice) {
+            let area = document.getElementById("receiptPrintArea");
+            let itemsHTML = "";
+            invoice.items.forEach(item => {
+                itemsHTML += `
+                    <tr>
+                        <td>${item.medicine ? item.medicine.name : 'دواء'}</td>
+                        <td>${item.quantity}</td>
+                        <td>${item.subtotal}</td>
+                    </tr>
+                `;
+            });
+
+            area.innerHTML = `
+                <div style="text-align: center;">
+                    <h3 style="margin: 0;">صيدلية الشفاء</h3>
+                    <p style="margin: 2px;">فاتورة مبيعات رقم: ${invoice.invoice_number}</p>
+                    <p style="margin: 2px;">التاريخ: ${new Date().toLocaleString('ar-EG')}</p>
+                    <hr>
+                </div>
+                <table style="width: 100%; text-align: right;">
+                    <thead>
+                        <tr><th>الصنف</th><th>العدد</th><th>الإجمالي</th></tr>
+                    </thead>
+                    <tbody>${itemsHTML}</tbody>
+                </table>
+                <hr>
+                <div style="text-align: left; font-weight: bold; font-size: 14px;">
+                    المبلغ الإجمالي: ${invoice.total_amount} ج.م
+                </div>
+                <div style="text-align: center; margin-top: 15px;">
+                    <p>شكراً لزيارتكم ونتمنى لكم الشفاء العاجل!</p>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
