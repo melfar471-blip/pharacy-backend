@@ -140,4 +140,39 @@ class SaleController extends Controller
             ], 500);
         }
     }
+
+public function deductStockUsingFEFO($medicineId, $requestedQuantity)
+{
+   
+    $batches = MedicineBatch::where('medicine_id', $medicineId)
+        ->where('quantity', '>', 0)
+        ->orderBy('expiry_date', 'asc')
+        ->get();
+
+    $totalAvailable = $batches->sum('quantity');
+
+   
+    if ($totalAvailable < $requestedQuantity) {
+        throw new \Exception("الكمية المطلوبة غير متوفرة في المخزون الحالي.");
+    }
+
+    $remainingQtyToDeduct = $requestedQuantity;
+
+    foreach ($batches as $batch) {
+        if ($remainingQtyToDeduct <= 0) {
+            break;
+        }
+
+        if ($batch->quantity >= $remainingQtyToDeduct) {
+            
+            $batch->decrement('quantity', $remainingQtyToDeduct);
+            $remainingQtyToDeduct = 0;
+        } else {
+            
+            $remainingQtyToDeduct -= $batch->quantity;
+            $batch->update(['quantity' => 0]);
+        }
+    }
 }
+}
+?>

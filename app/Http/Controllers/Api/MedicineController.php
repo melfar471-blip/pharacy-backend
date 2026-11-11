@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\MedicineController as ApiMedicineController;
 use Illuminate\Http\Request;
 
 class MedicineController extends Controller
@@ -46,74 +46,117 @@ class MedicineController extends Controller
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\MedicineRequest;
 use App\Models\Medicine;
 use Illuminate\Http\Request;
 
 class MedicineController extends Controller
 {
-
+   
     public function index(Request $request)
     {
         $query = Medicine::query();
 
-        if ($request->has('search')) {
-            $search = $request->get('search');
-            $query->where('name', 'like', "%{$search}%")
-                  ->orWhere('barcode', 'like', "%{$search}%");
+       
+        if ($request->has('with_archived') && $request->with_archived == 'true') {
+           
+        } else {
+            $query->where('is_archived', false);
         }
 
-        return response()->json($query->paginate(10), 200);
+       
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('barcode', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->has('category') && !empty($request->category)) {
+            $query->where('category', $request->category);
+        }
+
+       
+        $perPage = $request->get('per_page', 15);
+        $medicines = $query->orderBy('created_at', 'desc')->paginate($perPage);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $medicines
+        ], 200);
     }
 
    
-    public function store(Request $request)
+    public function store(MedicineRequest $request)
     {
-        $validated = $request->validate([
-            'barcode' => 'required|unique:medicines,barcode',
-            'name' => 'required|string|max:255',
-            'category' => 'required|string',
-            'quantity' => 'required|integer|min:0',
-            'alert_threshold' => 'required|integer|min:0',
-            'purchase_price' => 'required|numeric|min:0',
-            'selling_price' => 'required|numeric|min:0',
-            'expiry_date' => 'required|date',
-            'supplier_name' => 'nullable|string'
-        ]);
-
-        $medicine = Medicine::create($validated);
+        $medicine = Medicine::create($request->validated());
 
         return response()->json([
+            'status' => 'success',
             'message' => 'تم إضافة الدواء بنجاح',
             'data' => $medicine
         ], 201);
     }
 
-    
-    public function lowStock()
+   
+    public function update(MedicineRequest $request, $id)
     {
-        $medicines = Medicine::whereColumn('quantity', '<=', 'alert_threshold')->get();
+        $medicine = Medicine::findOrFail($id);
+        
+        $medicine->update($request->validated());
 
         return response()->json([
-            'count' => $medicines->count(),
-            'data' => $medicines
+            'status' => 'success',
+            'message' => 'تم تحديث بيانات الدواء بنجاح',
+            'data' => $medicine
         ], 200);
     }
 
-            public function expiryAlerts(Request $request)
-            {
-                $days = $request->get('days', 90); 
-             $targetDate = now()->addDays($days)->toDateString();
-            $expiringMedicines = Medicine::where('expiry_date', '<=', $targetDate)
-            ->orderBy('expiry_date', 'asc')
-            ->get();
+
+    public function destroy($id)
+    {
+        $medicine = Medicine::findOrFail($id);
+
+        
+        if ($medicine->saleItems()->exists()) {
+           
+            $medicine->update(['is_archived' => true, 'quantity' => 0]);
 
             return response()->json([
-            'count' => $expiringMedicines->count(),
-            'message' => "الأدوية المنتهية أو التي ستنتهي خلال {$days} يوماً",
-            'data' => $expiringMedicines
-                ], 200);
-            }
+                'status' => 'success',
+                'message' => 'الدواء مرتبط بمبيعات سابقة، تم تحويله إلى الأرشيف وتصفير رصيده بنجاح بدل حذفه.'
+            ], 200);
+        }
 
+      
+        $medicine->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم حذف الدواء نهائياً بنجاح.'
+        ], 200);
+    }
+
+
+public function expiryAlerts(Request $request)
+    {
+    
+    $days = $request->get('days', 90);
+    $targetDate = now()->addDays($days);
+
+    $nearExpiryBatches = MedicineBatch::with('medicine')
+        ->where('expiry_date', '<=', $targetDate)
+        ->where('quantity', '>', 0)
+        ->orderBy('expiry_date', 'asc')
+        ->paginate(15);
+
+    return response()->json([
+        'status' => 'success',
+        'message' => 'قائمة الأدوية والباتشات قريبة الانتهاء',
+        'data' => $nearExpiryBatches
+        ], 200);
+    }
 }
 
 ?>

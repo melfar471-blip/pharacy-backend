@@ -6,22 +6,23 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('sale_items', function (Blueprint $table) {
             $table->id();
+            // ربط صحيح مع جدول sales وجدول medicines مع الحذف المتسلسل أو المقيد
+            $table->foreignId('sale_id')->constrained('sales')->onDelete('cascade');
+            $table->foreignId('medicine_id')->constrained('medicines')->onDelete('restrict');
+            $table->integer('quantity');
+            $table->decimal('unit_price', 8, 2);
+            $table->decimal('subtotal', 8, 2);
             $table->timestamps();
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('sale_items');
     }
 };
+?>
